@@ -96,6 +96,20 @@ details ul{margin:6px 0 0;padding-left:20px;font-size:.9rem;color:var(--ink2)}
 .inv .chk{display:flex;align-items:center;gap:6px;font-size:.85rem}
 .inv .chk input{width:20px;height:20px;min-height:0}
 
+.npg{display:grid;gap:10px;grid-template-columns:1fr 1fr}
+.npg .full{grid-column:1/-1}
+.npg .field{margin:0}
+.chkline{display:flex;gap:8px;align-items:center;font-size:.9rem}
+.chkline input{width:20px;height:20px;min-height:0}
+.prev{width:84px;height:84px;border-radius:12px;object-fit:cover;border:1.5px solid var(--line)}
+.inv2{background:var(--surface);border:1.5px solid var(--line);border-radius:16px;padding:12px;margin:10px 0;display:grid;gap:10px;grid-template-columns:1fr 1fr}
+.inv2 .exh{grid-column:1/-1;display:flex;gap:10px;align-items:center}
+.inv2 .exh img,.inv2 .exh .nofoto{width:48px;height:48px;border-radius:10px;object-fit:cover;background:var(--surface2);flex:none}
+.inv2 label{display:grid;gap:3px;font-size:.82rem;font-weight:700}
+.inv2 .chk{display:flex;align-items:center;gap:6px}
+.inv2 .chk input{width:20px;height:20px;min-height:0}
+.inv2 .acts{grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap}
+h3.sec{margin:20px 0 6px;font-size:1.2rem}
 .toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 20px);transform:translateX(-50%);background:var(--green);color:var(--btn-ink);padding:10px 18px;border-radius:999px;font-weight:800;opacity:0;pointer-events:none;transition:opacity .25s;z-index:50;max-width:92vw;text-align:center}
 .toast.show{opacity:1}
 @media (prefers-reduced-motion: reduce){.toast{transition:none}}
@@ -159,6 +173,25 @@ details ul{margin:6px 0 0;padding-left:20px;font-size:.9rem;color:var(--ink2)}
     <div id="tab-inv" hidden>
       <p class="meta">Cuántas unidades tienes de cada pieza. Con esto la página avisa cuando una fecha ya no tiene piezas libres.</p>
       <div id="inv-list"></div>
+
+      <h3 class="sec">Piezas nuevas</h3>
+      <div class="panel" style="margin-top:6px">
+        <h3>Agregar una pieza al cotizador</h3>
+        <p class="meta">Aparece en el cotizador al momento, sin tocar el código. Los combos no cambian.</p>
+        <form id="npForm" autocomplete="off" class="npg">
+          <div class="field full"><label for="np-nombre">Nombre</label><input id="np-nombre" maxlength="60" required placeholder="Ej.: Arco cuadrado dorado"></div>
+          <div class="field full"><label for="np-desc">Descripción corta (medidas, material)</label><input id="np-desc" maxlength="120" placeholder="Ej.: Dorado, 2 × 1.5 m, con bases"></div>
+          <div class="field"><label for="np-precio">Precio de alquiler ($)</label><input id="np-precio" type="number" min="0" max="500" step="0.5" required></div>
+          <div class="field"><label for="np-unid">Unidades que tienes</label><input id="np-unid" type="number" min="0" max="999" step="1" value="1" required></div>
+          <div class="field full"><label for="np-cat">Dónde aparece en el cotizador</label><select id="np-cat"></select></div>
+          <div class="field full"><label for="np-foto">Foto (opcional)</label><input id="np-foto" type="file" accept="image/*"><img id="np-prev" class="prev" alt="Vista previa" hidden></div>
+          <label class="chkline full"><input id="np-cuenta" type="checkbox" checked> Cuenta para los descuentos por cantidad (desmárcalo para cosas como las sillas)</label>
+          <p class="msg full" id="np-msg" role="alert"></p>
+          <div class="full"><button class="btn" id="np-go" type="submit">Agregar al cotizador</button></div>
+        </form>
+      </div>
+      <div id="extra-list"></div>
+
       <div class="panel">
         <h3>Entrega y devolución</h3>
         <p class="meta">Cuántos días antes del evento se entrega y cuántos días después se devuelve. Las piezas quedan ocupadas todo ese tiempo.</p>
@@ -174,6 +207,8 @@ details ul{margin:6px 0 0;padding-left:20px;font-size:.9rem;color:var(--ink2)}
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script src="config.js"></script>
+<script src="vendor/jspdf.umd.min.js"></script>
+<script src="pdf.js"></script>
 <script>
 (function(){
 "use strict";
@@ -183,7 +218,7 @@ var SKEY = "af-admin-session";
 var ESTADOS = [["nueva","Nueva"],["fecha_confirmada","Fecha confirmada"],["abonada","Abono recibido"],["entregada","Entregada"],["devuelta","Devuelta"],["cancelada","Cancelada"]];
 var NOMBRE = {}; ESTADOS.forEach(function(e){ NOMBRE[e[0]]=e[1]; });
 var BLOQUEA = {fecha_confirmada:1, abonada:1, entregada:1};
-var sess = null, inv = [], cfg = {antes:1, desp:1};
+var sess = null, inv = [], cfg = {antes:1, desp:1}, cotMap = {};
 var calY, calM, calSel = null, calData = [];
 
 function $(s, r){ return (r||document).querySelector(s); }
@@ -284,8 +319,15 @@ function loadCot(){
     $("#cot-count").textContent = rows.length + (rows.length===1 ? " cotización" : " cotizaciones");
     var box = $("#cot-list"); box.innerHTML = "";
     if(!rows.length){ box.innerHTML = '<div class="card meta">No hay cotizaciones con ese filtro.</div>'; return; }
-    rows.forEach(function(c){ box.appendChild(card(c)); });
+    rows.forEach(function(c){ cotMap[c.id] = c; box.appendChild(card(c)); });
   }).catch(function(e){ toast(e.message); });
+}
+function pdfDeCot(c){
+  var lineas = (c.detalle && c.detalle.length) ? c.detalle.map(AFPDF.parseLinea)
+    : (c.cotizacion_items||[]).map(function(i){ return {cant:String(i.cantidad), desc:invName(i.item_id), precio:""}; });
+  return {codigo:c.codigo, emitida:new Date(c.creada), cliente:{nombre:c.nombre, instagram:c.instagram},
+    evento:{fecha:c.fecha_evento, tipo:c.tipo_evento}, entrega:{tipo:c.entrega, zona:c.zona}, lineas:lineas,
+    resumen:[], total:Number(c.total), abono:Number(c.abono||0), estado:c.estado, notas:c.notas, deposito:10};
 }
 function invName(id){ var f = inv.filter(function(i){ return i.item_id===id; })[0]; return f ? f.nombre : id; }
 function card(c){
@@ -308,7 +350,9 @@ function card(c){
       '<div class="full acts"><button class="btn small" data-a="save" type="button">Guardar</button>'+
       (c.estado==="nueva" ? '<button class="btn ghost small" data-a="libre" type="button">Fecha libre, confirmar</button>' : '')+
       (c.estado==="fecha_confirmada" ? '<button class="btn ghost small" data-a="abono" type="button">Abono recibido</button>' : '')+
-      '<button class="btn ghost small" data-a="copiar" type="button">Copiar código</button><span class="ok" data-ok></span></div>'+
+      '<button class="btn ghost small" data-a="pdf" type="button">Descargar PDF</button>'+
+      '<button class="btn ghost small" data-a="copiar" type="button">Copiar código</button>'+
+      '<button class="btn ghost small" data-a="eliminar" type="button">Eliminar</button><span class="ok" data-ok></span></div>'+
     '</div>';
   return el;
 }
@@ -317,6 +361,20 @@ $("#cot-list").addEventListener("click", function(e){
   var el = b.closest(".card"), id = el.getAttribute("data-id"), a = b.getAttribute("data-a");
   var code = $(".code", el).textContent;
   if(a==="copiar"){ try{ navigator.clipboard.writeText(code); toast("Código copiado: "+code); }catch(x){ toast(code); } return; }
+  if(a==="pdf"){
+    var cq = cotMap[id];
+    if(!window.AFPDF || !(window.jspdf && window.jspdf.jsPDF)){ toast("No se cargó la librería de PDF"); return; }
+    try{ AFPDF.entregar(pdfDeCot(cq), {compartir:false}).then(function(){ toast("PDF generado"); }); }catch(x){ toast("No se pudo generar el PDF"); }
+    return;
+  }
+  if(a==="eliminar"){
+    if(!window.confirm("¿Eliminar la cotización "+code+"? No se puede deshacer.")) return;
+    api("cotizaciones?id=eq."+id, {method:"DELETE", headers:{"Prefer":"return=representation"}}).then(function(r){
+      if(!r || !r.length) throw new Error("No se eliminó. ¿Tu usuario es administrador?");
+      toast("Cotización eliminada"); return loadCot();
+    }).catch(function(x){ toast(x.message); });
+    return;
+  }
   var estado = $('[data-f="estado"]', el).value;
   var abono = Number($('[data-f="abono"]', el).value || 0);
   var notas = $('[data-f="notas_internas"]', el).value;
@@ -402,13 +460,28 @@ function loadInv(){
   return api("inventario?select=*&order=nombre.asc").then(function(r){ inv = r; return api("config?select=*"); })
     .then(function(c){ c.forEach(function(x){ if(x.clave==="dias_antes") cfg.antes=Number(x.valor); if(x.clave==="dias_despues") cfg.desp=Number(x.valor); }); $("#c-antes").value=cfg.antes; $("#c-desp").value=cfg.desp; });
 }
+var CATEGORIAS = [["arcos","Arcos y aros"],["bases","Bases, mesitas y escaleras"],["mesas","Mesas y sillas"],["luces","Letreros LED"],["extras","Accesorios"]];
+function catNombre(id){ var f = CATEGORIAS.filter(function(c){ return c[0]===id; })[0]; return f ? f[1] : id; }
 function renderInv(){
   var box = $("#inv-list"); box.innerHTML = "";
-  inv.forEach(function(i){
+  inv.filter(function(i){ return i.precio==null; }).forEach(function(i){
     var row = document.createElement("div"); row.className = "inv"; row.setAttribute("data-id", i.item_id);
     row.innerHTML = '<span class="nm">'+esc(i.nombre)+'</span><input type="number" min="0" max="999" value="'+esc(i.unidades)+'" aria-label="Unidades de '+esc(i.nombre)+'">'+
       '<label class="chk"><input type="checkbox"'+(i.activo?" checked":"")+'> activa</label><button class="btn small" type="button">Guardar</button>';
     box.appendChild(row);
+  });
+  var ex = $("#extra-list"); ex.innerHTML = "";
+  var extras = inv.filter(function(i){ return i.precio!=null; });
+  if(!extras.length){ ex.innerHTML = '<p class="meta">Todavía no has agregado piezas nuevas.</p>'; }
+  extras.forEach(function(i){
+    var row = document.createElement("div"); row.className = "inv2"; row.setAttribute("data-id", i.item_id);
+    var foto = (i.foto && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+\/=]+$/.test(i.foto)) ? '<img src="'+i.foto+'" alt="">' : '<span class="nofoto"></span>';
+    row.innerHTML = '<div class="exh">'+foto+'<div><b>'+esc(i.nombre)+'</b><br><small class="meta">'+esc(catNombre(i.categoria))+(i.descripcion?" · "+esc(i.descripcion):"")+'</small></div></div>'+
+      '<label>Precio ($)<input data-k="precio" type="number" min="0" max="500" step="0.5" value="'+esc(i.precio)+'"></label>'+
+      '<label>Unidades<input data-k="unidades" type="number" min="0" max="999" value="'+esc(i.unidades)+'"></label>'+
+      '<label class="chk"><input data-k="activo" type="checkbox"'+(i.activo?" checked":"")+'> visible en el cotizador</label>'+
+      '<div class="acts"><button class="btn small" data-x="guardar" type="button">Guardar</button><button class="btn ghost small" data-x="borrar" type="button">Eliminar</button></div>';
+    ex.appendChild(row);
   });
 }
 $("#inv-list").addEventListener("click", function(e){
@@ -427,6 +500,80 @@ $("#c-save").addEventListener("click", function(){
     api("config?clave=eq.dias_antes", {method:"PATCH", body:{valor:String(a)}, headers:{"Prefer":"return=representation"}}),
     api("config?clave=eq.dias_despues", {method:"PATCH", body:{valor:String(d)}, headers:{"Prefer":"return=representation"}})
   ]).then(function(){ cfg.antes=a; cfg.desp=d; toast("Reglas guardadas"); }).catch(function(x){ toast(x.message); });
+});
+
+/* ---------- piezas nuevas ---------- */
+function limpio(t){ return String(t||"").replace(/[<>"&]/g,"").replace(/\s+/g," ").trim(); }
+function slugDe(n){
+  var b = limpio(n).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").slice(0,28);
+  if(b.length<2) b = "pieza-"+Math.random().toString(36).slice(2,6);
+  var id = b, k = 2;
+  while(inv.some(function(i){ return i.item_id===id; })) id = b+"-"+(k++);
+  return id;
+}
+function leerFoto(file){
+  return new Promise(function(res, rej){
+    var fr = new FileReader();
+    fr.onerror = function(){ rej(new Error("No se pudo leer la foto")); };
+    fr.onload = function(){
+      var img = new Image();
+      img.onerror = function(){ rej(new Error("Ese archivo no parece una imagen válida")); };
+      img.onload = function(){
+        var max = 640, k = Math.min(1, max/Math.max(img.width, img.height));
+        var c = document.createElement("canvas"); c.width = Math.max(1,Math.round(img.width*k)); c.height = Math.max(1,Math.round(img.height*k));
+        var x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0,0,c.width,c.height); x.drawImage(img,0,0,c.width,c.height);
+        var q = 0.74, out = c.toDataURL("image/jpeg", q);
+        while(out.length > 180000 && q > 0.3){ q -= 0.1; out = c.toDataURL("image/jpeg", q); }
+        if(out.length > 240000){ rej(new Error("La foto es muy pesada. Usa una más pequeña.")); return; }
+        res(out);
+      };
+      img.src = fr.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+CATEGORIAS.forEach(function(c){ var o=document.createElement("option"); o.value=c[0]; o.textContent=c[1]; $("#np-cat").appendChild(o); });
+$("#np-foto").addEventListener("change", function(){
+  var f = this.files[0], pv = $("#np-prev");
+  if(!f){ pv.hidden = true; return; }
+  leerFoto(f).then(function(u){ pv.src = u; pv.hidden = false; $("#np-msg").textContent = ""; }).catch(function(e){ pv.hidden = true; $("#np-msg").textContent = e.message; });
+});
+$("#npForm").addEventListener("submit", function(e){
+  e.preventDefault();
+  var msg = $("#np-msg"), btn = $("#np-go"); msg.textContent = "";
+  var nombre = limpio($("#np-nombre").value), desc = limpio($("#np-desc").value);
+  var precio = Number($("#np-precio").value), unid = parseInt($("#np-unid").value, 10), cat = $("#np-cat").value;
+  if(nombre.length < 2){ msg.textContent = "Escribe el nombre de la pieza."; return; }
+  if(isNaN(precio) || precio < 0 || precio > 500){ msg.textContent = "El precio debe estar entre 0 y 500."; return; }
+  if(isNaN(unid) || unid < 0 || unid > 999){ msg.textContent = "Las unidades deben estar entre 0 y 999."; return; }
+  btn.disabled = true;
+  var file = $("#np-foto").files[0];
+  (file ? leerFoto(file) : Promise.resolve(null)).then(function(foto){
+    var body = {item_id:slugDe(nombre), nombre:nombre, descripcion:desc, precio:precio, unidades:unid, categoria:cat, cuenta_descuento:$("#np-cuenta").checked, activo:true, foto:foto};
+    return api("inventario", {method:"POST", body:body, headers:{"Prefer":"return=representation"}});
+  }).then(function(r){
+    if(!r || !r.length) throw new Error("No se guardó. ¿Corriste el archivo 02-piezas-nuevas-y-pdf.sql en Supabase?");
+    inv.push(r[0]); $("#npForm").reset(); $("#np-prev").hidden = true; renderInv(); toast("Pieza agregada. Ya aparece en el cotizador.");
+  }).catch(function(x){ msg.textContent = x.message; }).then(function(){ btn.disabled = false; });
+});
+$("#extra-list").addEventListener("click", function(e){
+  var b = e.target.closest("button[data-x]"); if(!b) return;
+  var row = b.closest(".inv2"), id = row.getAttribute("data-id"), x = b.getAttribute("data-x");
+  if(x==="guardar"){
+    var precio = Number($('[data-k="precio"]', row).value), u = parseInt($('[data-k="unidades"]', row).value, 10), act = $('[data-k="activo"]', row).checked;
+    if(isNaN(precio) || precio<0 || precio>500 || isNaN(u) || u<0){ toast("Revisa el precio y las unidades"); return; }
+    api("inventario?item_id=eq."+encodeURIComponent(id), {method:"PATCH", body:{precio:precio, unidades:u, activo:act}, headers:{"Prefer":"return=representation"}})
+      .then(function(r){ if(!r||!r.length) throw new Error("No se guardó"); inv.forEach(function(i){ if(i.item_id===id){ i.precio=precio; i.unidades=u; i.activo=act; } }); toast("Pieza guardada"); })
+      .catch(function(err){ toast(err.message); });
+  }
+  if(x==="borrar"){
+    if(!window.confirm("¿Eliminar esta pieza del cotizador?")) return;
+    api("inventario?item_id=eq."+encodeURIComponent(id), {method:"DELETE", headers:{"Prefer":"return=representation"}})
+      .then(function(r){ inv = inv.filter(function(i){ return i.item_id!==id; }); renderInv(); toast("Pieza eliminada"); })
+      .catch(function(err){
+        toast(/foreign key|violates/i.test(err.message) ? "Ya aparece en cotizaciones. Mejor desmarca 'visible en el cotizador'." : err.message);
+      });
+  }
 });
 
 /* ---------- eventos de acceso ---------- */

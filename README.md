@@ -5,9 +5,11 @@ Qué incluye este paquete:
 | Archivo | Para qué sirve |
 |---|---|
 | `index.html` | La página que ven tus clientes (el cotizador). |
-| `admin.html` | Tu panel privado: cotizaciones, calendario de reservas e inventario. |
+| `admin.html` | Tu panel privado: cotizaciones, calendario de reservas, inventario y piezas nuevas. |
 | `config.js` | Aquí pegas los datos de tu proyecto de Supabase. |
-| `supabase/setup.sql` | Crea la base de datos con sus reglas de seguridad. |
+| `pdf.js` y `vendor/` | Generan la cotización en PDF (la librería viene incluida, no depende de internet). |
+| `supabase/setup.sql` | Crea la base de datos con sus reglas de seguridad (se corre primero). |
+| `supabase/02-piezas-nuevas-y-pdf.sql` | Agrega lo necesario para crear piezas nuevas desde el panel (se corre después). |
 | `logo/` | Tu logo en vector y PNG. |
 
 Si dejas `config.js` vacío, el cotizador sigue funcionando como antes (solo envía por WhatsApp, sin guardar nada).
@@ -80,3 +82,30 @@ Con un repositorio público, GitHub Pages es gratis. Con uno privado, depende de
 - **El panel dice "no es administrador":** falta el paso 5 de la Parte 1 (o el correo no coincide).
 - **"Permission denied" o "relation does not exist":** el `setup.sql` no se ejecutó completo; vuelve a correrlo.
 - **Un cliente recibe "demasiadas solicitudes":** es el límite por hora; puedes subirlo en la tabla `config` (`max_cotizaciones_hora`).
+
+---
+
+## Actualización 2: PDF y piezas nuevas
+
+**PDF de la cotización**
+- En el cotizador, el botón **Descargar o compartir PDF** genera la cotización con tu logo, el detalle, el total y las reglas de reserva. En teléfonos que lo permiten abre el menú de compartir, donde puedes elegir WhatsApp y el PDF va adjunto. En los demás, se descarga.
+- Un enlace de WhatsApp solo puede llevar texto, nunca un archivo. Por eso el botón verde sigue enviando el mensaje, y el PDF se adjunta aparte en el chat.
+- En el navegador interno de Instagram las descargas a veces no funcionan: el PDF se intenta abrir en una pestaña nueva. Si no se ve, conviene abrir el cotizador en Chrome o Safari.
+- En el panel, cada cotización tiene **Descargar PDF**. Esa versión incluye el estado de la reserva, el abono recibido y el saldo pendiente, y es la que conviene mandar al cliente por WhatsApp cuando confirmas su fecha.
+
+**Piezas nuevas sin tocar código**
+1. Ejecuta una sola vez `supabase/02-piezas-nuevas-y-pdf.sql` en el SQL Editor de Supabase.
+2. En el panel, pestaña **Inventario**, sección **Piezas nuevas**: escribe nombre, descripción, precio, unidades y categoría, y sube una foto (opcional). Toca **Agregar al cotizador**.
+3. La pieza aparece en el cotizador al recargarlo. Puedes cambiar su precio y unidades, ocultarla (desmarcando "visible en el cotizador") o eliminarla si nunca se usó en una cotización.
+- Las piezas nuevas se cotizan y reservan igual que las demás, y el calendario las cuenta.
+- Los **combos** siguen definidos en `index.html`. Una pieza nueva no entra en un combo hasta que se edite el archivo.
+- Las piezas originales se siguen editando solo en sus unidades; sus precios están en `index.html`.
+
+**Eliminar cotizaciones:** el panel tiene un botón **Eliminar** en cada una (pide confirmación). Sirve para pruebas y duplicadas.
+
+### Cómo instalar esta actualización
+1. En Supabase, SQL Editor, pestaña nueva: pega `supabase/02-piezas-nuevas-y-pdf.sql` y toca Run (si aparece la advertencia de "operaciones destructivas", toca Run query).
+2. En tu repositorio de GitHub: Add file, Upload files. Sube estos archivos y confirma con Commit changes:
+   `index.html`, `admin.html` y `pdf.js` (reemplazan o agregan), la carpeta `vendor/` con sus dos archivos, y `supabase/02-piezas-nuevas-y-pdf.sql`.
+3. **No subas ni reemplaces `config.js`**: ya tiene tus datos.
+4. Espera 1 o 2 minutos y recarga las dos páginas con Ctrl + F5.
